@@ -1,0 +1,28 @@
+{
+  "models": [
+    {
+      "id": "dqn",
+      "name": "DQN",
+      "agent_type": "dqn",
+      "description": "Deep Q-Network with replay buffer and target network"
+    },
+    {
+      "id": "double_dqn",
+      "name": "Double DQN",
+      "agent_type": "double_dqn",
+      "description": "Reduces Q-value overestimation via decoupled selection/evaluation"
+    },
+    {
+      "id": "dueling_dqn",
+      "name": "Dueling DQN",
+      "agent_type": "dueling_dqn",
+      "description": "Splits value and advantage streams for better feature learning"
+    },
+    {
+      "id": "tabular_q",
+      "name": "Tabular Q-Learning",
+      "agent_type": "tabular_q",
+      "description": "Classic lookup-table Q-learning, fast and guaranteed convergence for small domains"
+    }
+  ]
+}
