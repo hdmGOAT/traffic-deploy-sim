@@ -84,6 +84,23 @@ export function SimulatorPage() {
     }
   }, []);
 
+  const handleReplayConfig = useCallback((config: any, demand: any) => {
+    if (config) {
+      setControllerType(config.controllerType || "rl");
+      setModelId(config.modelId || "dqn");
+      setFixedTime(config.fixedTime ?? 30);
+      setDuration(config.duration ?? 300);
+      setSeed(config.seed ?? 42);
+    }
+    if (demand && Array.isArray(demand.entries)) {
+      const newDemandMap: Record<string, number> = {};
+      demand.entries.forEach((entry: any) => {
+        newDemandMap[entry.edge] = entry.rate;
+      });
+      setDemandMap(newDemandMap);
+    }
+  }, []);
+
   useEffect(() => {
     getEdges(DEFAULT_ROADNET).then((data) => setEdges(data.edges || []));
     getModels().then((data) => {
@@ -256,9 +273,23 @@ export function SimulatorPage() {
             <p className="font-heading text-lg font-semibold tracking-tight text-primary sm:text-xl">
               TrafficSense RL
             </p>
-            <div className="flex items-center gap-2 rounded-full border border-border/50 bg-surface-container-low px-3 py-1 shadow-sm">
-              <span className={`h-2 w-2 rounded-full ${status === "running" ? "bg-secondary" : "bg-muted-foreground"}`} />
-              <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            <div className="flex items-center gap-2 rounded-full border border-border/50 px-3 py-1 shadow-sm"
+              style={{
+                backgroundColor: status === "running" ? 'var(--success)' : 'var(--muted)',
+              }}
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{
+                  backgroundColor: status === "running" ? 'var(--success-foreground, var(--success))' : 'var(--muted-foreground, var(--muted))',
+                }}
+              />
+              <span
+                className="text-[10px] font-semibold uppercase tracking-[0.22em]"
+                style={{
+                  color: status === "running" ? 'var(--success-foreground, var(--success))' : 'var(--muted-foreground, var(--muted))',
+                }}
+              >
                 {status === "running" ? "Stream Active" : "Idle"}
               </span>
             </div>
@@ -282,13 +313,39 @@ export function SimulatorPage() {
               Live Simulation
             </h2>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span className="flex items-center gap-2 rounded-full border border-border/50 bg-secondary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-foreground shadow-sm">
-                <span className="h-2 w-2 rounded-full bg-secondary" />
+              <span
+                className="flex items-center gap-2 rounded-full border border-border/50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] shadow-sm"
+                style={{
+                  backgroundColor:
+                    status === "running"
+                      ? 'var(--success)'
+                      : isReplaying
+                      ? 'var(--accent)'
+                      : 'var(--muted)',
+                  color:
+                    status === "running"
+                      ? 'var(--success-foreground, var(--success))'
+                      : isReplaying
+                      ? 'var(--accent-foreground, var(--accent))'
+                      : 'var(--muted-foreground, var(--muted))',
+                }}
+              >
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{
+                    backgroundColor:
+                      status === "running"
+                        ? 'var(--success-foreground, var(--success))'
+                        : isReplaying
+                        ? 'var(--accent-foreground, var(--accent))'
+                        : 'var(--muted-foreground, var(--muted))',
+                  }}
+                />
                 {status === "running"
-                  ? (latestMetric?.policy_mode ?? "running")
+                  ? (latestMetric?.policy_mode?.toUpperCase?.() ?? "LEARNING")
                   : isReplaying
-                    ? "replaying"
-                    : "idle"}
+                  ? "REPLAYING"
+                  : "IDLE"}
               </span>
               {latestMetric?.step !== undefined && (
                 <span className="text-xs font-semibold uppercase tracking-[0.25em] text-foreground/70">
@@ -416,24 +473,24 @@ export function SimulatorPage() {
                       {demandAnchors.map((anchor) => (
                         <div
                           key={anchor.edge}
-                          className="absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border/60 bg-surface-bright/95 px-2 py-1 text-[10px] shadow-sm"
+                          className="absolute -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border/80 bg-background/70 px-2.5 py-1.5 text-[10px] shadow-md backdrop-blur"
                           style={{ left: anchor.left, top: anchor.top }}
                         >
-                          <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
+                          <div className="text-[9px] font-semibold uppercase tracking-[0.2em] text-foreground/60">
                             {anchor.edge}
                           </div>
                           <div className="flex items-center justify-between gap-2">
                             <button
-                              className="h-5 w-5 rounded-full border border-border/60 text-xs"
+                              className="h-5 w-5 rounded-full border border-border/80 bg-secondary/20 text-xs font-semibold text-foreground transition hover:bg-secondary/35"
                               onClick={() => adjustRate(anchor.edge, -2)}
                             >
                               -
                             </button>
-                            <span className="text-xs font-semibold text-foreground">
+                            <span className="rounded-full bg-foreground px-2 py-0.5 text-[11px] font-semibold text-background">
                               {demandMap[anchor.edge] || 0}
                             </span>
                             <button
-                              className="h-5 w-5 rounded-full border border-border/60 text-xs"
+                              className="h-5 w-5 rounded-full border border-border/80 bg-secondary/20 text-xs font-semibold text-foreground transition hover:bg-secondary/35"
                               onClick={() => adjustRate(anchor.edge, 2)}
                             >
                               +
@@ -461,10 +518,10 @@ export function SimulatorPage() {
                 {edgeOptions.slice(0, 6).map((edge) => (
                   <div
                     key={edge}
-                    className="flex items-center justify-between rounded-lg border border-border/60 bg-surface-bright px-3 py-2 text-xs"
+                    className="flex items-center justify-between rounded-xl border border-border/80 bg-background/95 px-3 py-2 text-xs shadow-sm"
                   >
                     <span className="font-medium text-foreground">{edge}</span>
-                    <span className="rounded-full border border-border/50 bg-secondary/10 px-2 py-1 text-[10px] font-semibold uppercase text-secondary">
+                    <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-background shadow-sm">
                       {demandMap[edge] || 0} veh/min
                     </span>
                   </div>
@@ -667,7 +724,11 @@ export function SimulatorPage() {
               </CardContent>
             </Card>
 
-            <ReplayPanel onFrame={handleReplayFrame} onFullMetrics={handleReplayFullMetrics} />
+            <ReplayPanel
+              onFrame={handleReplayFrame}
+              onFullMetrics={handleReplayFullMetrics}
+              onReplayConfig={handleReplayConfig}
+            />
           </div>
 
           {chartData.queue.length > 1 && (

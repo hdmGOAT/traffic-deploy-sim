@@ -738,7 +738,24 @@ async def get_simulation(job_id: str) -> dict:
 async def get_metrics(job_id: str) -> dict:
     if job_id not in jobs:
         return JSONResponse(status_code=404, content={"detail": "job not found"})
-    return {"metrics": jobs[job_id]["metrics"]}
+    job = jobs[job_id]
+    # Return metrics, config, and demand
+    request = job.get("request", {})
+    ctrl = request.get("controller", {})
+    demand = request.get("demand", {})
+    duration = request.get("duration_s", 0)
+    seed = request.get("seed", None)
+    return {
+        "metrics": job["metrics"],
+        "config": {
+            "controllerType": ctrl.get("type", ""),
+            "modelId": ctrl.get("model_id", ""),
+            "fixedTime": ctrl.get("fixed_time_s", 30),
+            "duration": duration,
+            "seed": seed,
+        },
+        "demand": demand,
+    }
 
 
 @app.websocket("/simulations/{job_id}/stream")
