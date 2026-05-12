@@ -85,3 +85,12 @@ export function openSimulationStream(jobId: string) {
   }
   return new WebSocket(`${wsBase.replace(/\/$/, "")}/simulations/${jobId}/stream`);
 }
+
+export async function cancelSimulation(jobId: string) {
+  const res = await fetch(buildUrl(`/simulations/${jobId}`), { method: "DELETE" });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || "Failed to cancel simulation");
+  }
+  return res.json().catch(() => ({}));
+}

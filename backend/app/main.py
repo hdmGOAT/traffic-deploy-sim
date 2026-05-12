@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
+import logging
+import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +37,11 @@ DATA_DIR = PROJECT_ROOT / "data"
 GENERATED_DIR = DATA_DIR / "generated"
 
 app = FastAPI(title="Traffic Deploy Sim")
+
+# Configure basic logging. Allow override with LOG_LEVEL env var.
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL)
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -104,13 +111,16 @@ def _write_engine_config(job_id: str, config: dict) -> Path:
 def _build_engine_config(job_id: str, request: SimulationRequest, flow_path: Path) -> dict:
     roadnet_path = _resolve_roadnet(request.roadnet_id)
 
+    # Enable CityFlow's RL traffic-light control whenever we intend to set
+    # phases programmatically (fixed_time, random, or rl). Without this flag
+    # CityFlow ignores set_tl_phase() calls and runs its own built-in logic.
     return {
         "interval": 1.0,
         "seed": request.seed or 0,
         "dir": "",
         "roadnetFile": str(roadnet_path.resolve()),
         "flowFile": str(flow_path.resolve()),
-        "rlTrafficLight": request.controller.type in ("rl", "random"),
+        "rlTrafficLight": request.controller.type in ("rl", "random", "fixed_time"),
         "saveReplay": False,
     }
 
@@ -668,10 +678,14 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["updated_at"] = _now_iso()
         await manager.broadcast(job_id, {"type": "done", "status": "completed"})
+    except asyncio.CancelledError:
+        # Task cancellation requested. Mark job as cancelled and notify clients.
+        jobs[job_id]["status"] = "cancelled"
+        jobs[job_id]["updated_at"] = _now_iso()
+        await manager.broadcast(job_id, {"type": "done", "status": "cancelled"})
+        raise
     except Exception as exc:
-        import traceback
-        error_detail = traceback.format_exc()
-        print(error_detail, flush=True)
+        logger.exception("Simulation error for %s", job_id)
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(exc)
         jobs[job_id]["updated_at"] = _now_iso()
@@ -724,7 +738,9 @@ async def start_simulation(request: SimulationRequest) -> SimulationStatus:
         "request": request.model_dump(),
         "metrics": [],
     }
-    asyncio.create_task(_run_simulation(job_id, request))
+    task = asyncio.create_task(_run_simulation(job_id, request))
+    # Keep a reference to the running task so it can be cancelled later.
+    jobs[job_id]["task"] = task
     return SimulationStatus(id=job_id, status="running", created_at=now, updated_at=now)
 
 
@@ -759,6 +775,33 @@ async def get_simulation(job_id: str) -> dict:
         "updated_at": job["updated_at"],
         "error": job.get("error"),
     }
+
+
+@app.delete("/simulations/{job_id}")
+async def cancel_simulation(job_id: str) -> dict:
+    """Cancel a running simulation job.
+
+    If the job is running, the server will request cancellation of the
+    background task and update the job status to "cancelled".
+    """
+    if job_id not in jobs:
+        return JSONResponse(status_code=404, content={"detail": "job not found"})
+    job = jobs[job_id]
+    if job.get("status") != "running":
+        return JSONResponse(status_code=409, content={"detail": "job not running"})
+    task = job.get("task")
+    if not task:
+        # No running task handle; mark as cancelled anyway.
+        job["status"] = "cancelled"
+        job["updated_at"] = _now_iso()
+        await manager.broadcast(job_id, {"type": "done", "status": "cancelled"})
+        return {"id": job_id, "status": "cancelled"}
+
+    # Request cancellation.
+    task.cancel()
+    job["status"] = "cancelling"
+    job["updated_at"] = _now_iso()
+    return {"id": job_id, "status": "cancelling"}
 
 
 @app.get("/simulations/{job_id}/metrics")

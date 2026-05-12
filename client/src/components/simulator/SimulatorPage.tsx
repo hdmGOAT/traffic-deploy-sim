@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
-import { createSimulation, getEdges, getModels, getRoadnet, openSimulationStream } from "@/lib/simApi";
+import { createSimulation, getEdges, getModels, getRoadnet, openSimulationStream, cancelSimulation } from "@/lib/simApi";
 import { ReplayPanel } from "@/components/simulator/ReplayPanel";
 import { RoadCanvas, buildTransform, mapPoint, type Roadnet, type VehicleFrame } from "@/components/simulator/RoadCanvas";
 import { SparkChart } from "@/components/simulator/SparkChart";
@@ -40,7 +40,7 @@ export function SimulatorPage() {
   const [controllerType, setControllerType] = useState("rl");
   const [modelId, setModelId] = useState("dqn");
   const [fixedTime, setFixedTime] = useState(30);
-  const [duration, setDuration] = useState(300);
+  const [duration, setDuration] = useState(3000);
   const [seed, setSeed] = useState(42);
   const [status, setStatus] = useState("idle");
     const [gamma, setGamma] = useState(0.95);
@@ -61,6 +61,8 @@ export function SimulatorPage() {
   const [demandSize, setDemandSize] = useState({ width: 900, height: 320 });
   const [replayMode, setReplayMode] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  // Keep logs silent by default; enable with VITE_VERBOSE_LOGS=true in dev env.
+  const VERBOSE_LOGS = import.meta.env.VITE_VERBOSE_LOGS === "true";
 
   const handleReplayFrame = useCallback((frame: MetricFrame, cursor: number) => {
     if (status === "starting" || status === "running") return;
@@ -238,7 +240,7 @@ export function SimulatorPage() {
       wsRef.current = ws;
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log("[WS] Received:", data.type || "metric", { vehicleCount: data.vehicles?.length ?? 0, step: data.step });
+        if (VERBOSE_LOGS) console.log("[WS] Received:", data.type || "metric", { vehicleCount: data.vehicles?.length ?? 0, step: data.step });
         if (data.type === "done") {
           setStatus(data.status === "error" ? "error" : "completed");
           if (data.detail) setError(data.detail);
@@ -248,7 +250,7 @@ export function SimulatorPage() {
         }
         setMetrics((prev) => [...prev, data]);
         if (Array.isArray(data.vehicles)) {
-          console.log(`[Vehicles] Setting ${data.vehicles.length} vehicles at step ${data.step}`);
+          if (VERBOSE_LOGS) console.log(`[Vehicles] Setting ${data.vehicles.length} vehicles at step ${data.step}`);
           setVehicles(data.vehicles);
         }
       };
@@ -263,6 +265,23 @@ export function SimulatorPage() {
       setError(err.message || "Failed to start simulation");
       setStatus("idle");
     }
+  };
+
+  const handleCancel = async () => {
+    if (!jobId) return;
+    setStatus("cancelling");
+    try {
+      await cancelSimulation(jobId);
+    } catch (err: any) {
+      setError(err.message || "Failed to cancel");
+      setStatus("error");
+    }
+    // Close WS if open
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setJobId(null);
   };
 
   return (
@@ -295,13 +314,24 @@ export function SimulatorPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <Button
-              className="rounded-full bg-foreground text-sm font-semibold text-background shadow-sm transition hover:bg-foreground/90"
-              onClick={startSimulation}
-              disabled={status === "running" || status === "starting"}
-            >
-              {status === "running" ? "Running…" : "Deploy Agent"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                className="rounded-full bg-foreground text-sm font-semibold text-background shadow-sm transition hover:bg-foreground/90"
+                onClick={startSimulation}
+                disabled={status === "running" || status === "starting"}
+              >
+                {status === "running" ? "Running…" : "Deploy Agent"}
+              </Button>
+              {status === "running" && (
+                <Button
+                  variant="destructive"
+                  className="rounded-full text-sm font-semibold"
+                  onClick={handleCancel}
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </header>
