@@ -288,6 +288,7 @@ def _build_rl_config(
         cityflow_config_path=str(engine_config_path),
         cityflow_thread_num=1,
     )
+    env_cfg.reward.type = "mixed"
     training_cfg = TrainingConfig(
         agent_type=agent_type,
         gamma=request.gamma,
