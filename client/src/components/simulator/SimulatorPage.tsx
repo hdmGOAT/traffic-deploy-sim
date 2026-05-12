@@ -156,7 +156,7 @@ export function SimulatorPage() {
       if (Object.keys(prev).length) return prev;
       const initial: Record<string, number> = {};
       edgeOptions.forEach((edge) => {
-        initial[edge] = 8;
+        initial[edge] = 2;
       });
       return initial;
     });
