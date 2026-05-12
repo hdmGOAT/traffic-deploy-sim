@@ -21,18 +21,16 @@ except ImportError:
 
 try:
     from traffic_rl.agents.factory import build_agent
-    from traffic_rl.agents.fixed_time import FixedTimeAgent
     from traffic_rl.config import AppConfig, EnvironmentConfig, TrainingConfig
     from traffic_rl.envs.cityflow_env import CityFlowTrafficEnv
 except ImportError:
     build_agent = None
-    FixedTimeAgent = None
     AppConfig = None
     EnvironmentConfig = None
     TrainingConfig = None
     CityFlowTrafficEnv = None
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # app/main.py -> app -> backend -> traffic-deploy-sim
 DATA_DIR = PROJECT_ROOT / "data"
 GENERATED_DIR = DATA_DIR / "generated"
 
@@ -412,6 +410,10 @@ def _choose_phase_index(rng: random.Random, phases: int, controller: str, step: 
 async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
     if cityflow is None or CityFlowTrafficEnv is None or AppConfig is None:
         jobs[job_id]["status"] = "error"
+        jobs[job_id]["error"] = (
+            f"Missing runtime dependency: cityflow={cityflow is not None}, "
+            f"CityFlowTrafficEnv={CityFlowTrafficEnv is not None}, AppConfig={AppConfig is not None}"
+        )
         jobs[job_id]["updated_at"] = _now_iso()
         return
 
@@ -423,6 +425,7 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
     target_intersection = _pick_intersection(roadnet)
     if not target_intersection:
         jobs[job_id]["status"] = "error"
+        jobs[job_id]["error"] = "No signalized intersection found in roadnet"
         jobs[job_id]["updated_at"] = _now_iso()
         return
     intersection_id = target_intersection["id"]
@@ -458,8 +461,7 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
         )
         env = CityFlowTrafficEnv(cfg.env, seed=cfg.seed)
         if request.controller.type == "fixed_time":
-            cycle_steps = max(1, request.controller.fixed_time_s // cfg.env.decision_interval)
-            agent = FixedTimeAgent(action_size=env.action_size, cycle_steps=cycle_steps)
+            agent = None
         elif request.controller.type == "random":
             agent = None
         else:
@@ -471,6 +473,14 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
         for step in range(request.duration_s):
             if request.controller.type == "random":
                 action = rng.randrange(env.action_size)
+            elif request.controller.type == "fixed_time":
+                action = _choose_phase_index(
+                    rng,
+                    env.action_size,
+                    "fixed_time",
+                    step,
+                    request.controller.fixed_time_s,
+                )
             else:
                 action = agent.act(state, train=True)
 
@@ -580,6 +590,7 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
     except Exception as exc:
         import traceback
         error_detail = traceback.format_exc()
+        print(error_detail, flush=True)
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(exc)
         jobs[job_id]["updated_at"] = _now_iso()
@@ -665,6 +676,7 @@ async def get_simulation(job_id: str) -> dict:
         "status": job["status"],
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
+        "error": job.get("error"),
     }
 
 

@@ -198,6 +198,7 @@ export function SimulatorPage() {
       wsRef.current = ws;
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        console.log("[WS] Received:", data.type || "metric", { vehicleCount: data.vehicles?.length ?? 0, step: data.step });
         if (data.type === "done") {
           setStatus(data.status === "error" ? "error" : "completed");
           if (data.detail) setError(data.detail);
@@ -207,6 +208,7 @@ export function SimulatorPage() {
         }
         setMetrics((prev) => [...prev, data]);
         if (Array.isArray(data.vehicles)) {
+          console.log(`[Vehicles] Setting ${data.vehicles.length} vehicles at step ${data.step}`);
           setVehicles(data.vehicles);
         }
       };
