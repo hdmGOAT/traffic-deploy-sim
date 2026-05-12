@@ -8,9 +8,10 @@ const SPEED_OPTIONS = [0.5, 1, 2, 4, 8];
 type ReplayPanelProps = {
   onFrame: (frame: any, cursor: number, total: number) => void;
   onFullMetrics?: (frames: any[]) => void;
+  onReplayConfig?: (config: any, demand: any) => void;
 };
 
-export function ReplayPanel({ onFrame, onFullMetrics }: ReplayPanelProps) {
+export function ReplayPanel({ onFrame, onFullMetrics, onReplayConfig }: ReplayPanelProps) {
   const [history, setHistory] = useState<any[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [allFrames, setAllFrames] = useState<any[]>([]);
@@ -45,8 +46,11 @@ export function ReplayPanel({ onFrame, onFullMetrics }: ReplayPanelProps) {
       setAllFrames(frames);
       onFullMetrics?.(frames);
       if (frames.length) onFrame(frames[0], 0, frames.length);
+      if (data.config && data.demand && typeof onReplayConfig === 'function') {
+        onReplayConfig(data.config, data.demand);
+      }
     },
-    [onFrame, onFullMetrics]
+    [onFrame, onFullMetrics, onReplayConfig]
   );
 
   useEffect(() => {

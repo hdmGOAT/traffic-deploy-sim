@@ -81,6 +81,10 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+
+  /* Success (green) for status badges */
+  --success: theme('colors.green.500', #22c55e);
+  --success-foreground: theme('colors.green.50', #f0fdf4);
 }
 
 .dark {
@@ -115,6 +119,10 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+
+  /* Success (green) for status badges in dark mode */
+  --success: theme('colors.green.400', #4ade80);
+  --success-foreground: theme('colors.green.950', #052e16);
 }
 
 @layer base {
