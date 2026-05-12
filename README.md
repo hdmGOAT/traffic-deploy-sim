@@ -139,7 +139,7 @@ Verify everything is installed:
 python -c "import traffic_rl; import cityflow; print('✓ All dependencies loaded')"
 ```
 
-The web app lives in [web](web) and is managed through the root workspace install.
+The web app lives in [client](client) and is managed through the root workspace install.
 
 ---
 
@@ -152,9 +152,9 @@ source backend/.venv/bin/activate
 pnpm dev
 ```
 
-Turbo will start the web app and backend together. The UI will be available at **http://localhost:3000** and the API at **http://localhost:8000**.
+Turbo will start the frontend app and backend together. The UI will be available at **http://localhost:3000** and the API at **http://localhost:8000**.
 
-Open the web app in your browser and you're ready to go.
+Open the frontend app in your browser and you're ready to go.
 
 ---
 
@@ -170,16 +170,15 @@ traffic-deploy-sim/
 │   │   └── model_registry.json  # Available RL agent definitions
 │   ├── package.json             # Turbo wrapper scripts for the Python backend
 │   └── requirements.txt         # Python dependencies (FastAPI, uvicorn, etc.)
-├── web/
+├── client/
 │   ├── src/
-│   │   ├── App.jsx              # Main React component — live simulation UI
-│   │   ├── ReplayPanel.jsx      # Replay controls for historical runs
-│   │   ├── api.js               # API / WebSocket client helpers
+│   │   ├── components/          # Simulator UI and shadcn components
+│   │   ├── lib/                 # API / utility helpers
 │   │   ├── main.jsx             # React entry point
 │   │   └── styles.css           # Global styles
 │   ├── index.html               # HTML entry point
 │   ├── vite.config.ts           # Vite configuration
-│   └── package.json             # Web app package
+│   └── package.json             # Frontend app package
 ├── data/
 │   ├── roadnet_1x2.json         # 1×2 intersection road network
 │   ├── roadnet_cross.json       # Single-cross intersection road network
