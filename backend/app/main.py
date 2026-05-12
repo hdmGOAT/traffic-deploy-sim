@@ -268,6 +268,32 @@ def _duration_steps_to_seconds(duration_steps: int, decision_interval: int = 5) 
     return max(1, int(duration_steps)) * max(1, int(decision_interval))
 
 
+def _training_cutoff_step(request: SimulationRequest) -> int:
+    """Stop online learning when exploration reaches its floor.
+
+    The frontend exposes epsilon schedule controls, so the run should keep
+    training only while exploration is still changing. Once epsilon has decayed
+    to epsilon_end, we freeze learning and switch the controller to replaying a
+    stabilized policy.
+    """
+    duration_steps = max(1, int(request.duration_s))
+
+    epsilon_start = float(request.epsilon_start)
+    epsilon_end = float(request.epsilon_end)
+    epsilon_decay = float(request.epsilon_decay)
+
+    if epsilon_start <= 0.0:
+        epsilon_cap = 0
+    elif epsilon_decay >= 1.0:
+        epsilon_cap = duration_steps if epsilon_end < epsilon_start else 0
+    elif epsilon_end >= epsilon_start:
+        epsilon_cap = 0
+    else:
+        epsilon_cap = int(math.ceil(math.log(epsilon_end / epsilon_start) / math.log(epsilon_decay)))
+
+    return max(0, min(duration_steps, epsilon_cap))
+
+
 def _build_rl_config(
     request: SimulationRequest,
     intersection_id: str,
@@ -288,7 +314,6 @@ def _build_rl_config(
         cityflow_config_path=str(engine_config_path),
         cityflow_thread_num=1,
     )
-    env_cfg.reward.type = "mixed"
     training_cfg = TrainingConfig(
         agent_type=agent_type,
         gamma=request.gamma,
@@ -307,6 +332,7 @@ def _build_rl_config(
         seed=request.seed or 7,
         output_dir=str(PROJECT_ROOT / "outputs"),
         env=env_cfg,
+        reward="mixed",
         training=training_cfg,
     )
 
@@ -489,7 +515,7 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
 
         obs = env.reset()
         state = obs.as_vector()
-        train_cutoff_step = min(300, request.duration_s)
+        train_cutoff_step = _training_cutoff_step(request)
         training_actions: list[int] = []
         frozen_policy_template: list[int] = []
         policy_cycle_steps = max(
