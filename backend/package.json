@@ -1,0 +1,10 @@
+{
+  "name": "backend",
+  "private": true,
+  "scripts": {
+    "dev": "python -m uvicorn app.main:app --reload --app-dir .",
+    "build": "python -m compileall -q app",
+    "check": "python -m compileall -q app",
+    "start": "python -m uvicorn app.main:app --app-dir ."
+  }
+}

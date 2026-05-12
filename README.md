@@ -1,6 +1,6 @@
 # Traffic Deploy Simulator
 
-A standalone prototype that simulates real-time deployment of traffic signal controllers using [CityFlow](https://cityflow.readthedocs.io/). RL agents **learn online** during each simulation run — no pre-trained checkpoints needed. The backend is FastAPI with WebSocket streaming; the frontend is React + Vite with live learning curves and simulation replay.
+A standalone prototype that simulates real-time deployment of traffic signal controllers using [CityFlow](https://cityflow.readthedocs.io/). RL agents **learn online** during each simulation run — no pre-trained checkpoints needed. The backend is FastAPI with WebSocket streaming; the web app is React + Vite with live learning curves and simulation replay.
 
 ---
 
@@ -13,7 +13,7 @@ A standalone prototype that simulates real-time deployment of traffic signal con
   - [2. Install the traffic-rl dependency](#2-install-the-traffic-rl-dependency)
   - [3. Install CityFlow](#3-install-cityflow)
   - [4. Backend setup](#4-backend-setup)
-  - [5. Frontend setup](#5-frontend-setup)
+  - [5. Backend setup](#5-backend-setup)
 - [Running the app](#running-the-app)
 - [Project Structure](#project-structure)
 - [How It Works](#how-it-works)
@@ -29,7 +29,7 @@ A standalone prototype that simulates real-time deployment of traffic signal con
 ```
 ┌──────────────┐  WebSocket / REST   ┌──────────────────┐
 │   React UI   │ ◄──────────────────► │  FastAPI Backend  │
-│  (Vite dev)  │    localhost:5173    │  localhost:8000   │
+│  (Vite dev)  │    localhost:3000    │  localhost:8000   │
 └──────────────┘                     └────────┬─────────┘
                                               │
                                      ┌────────▼─────────┐
@@ -51,8 +51,8 @@ A standalone prototype that simulates real-time deployment of traffic signal con
 | Requirement | Version | Notes |
 |---|---|---|
 | **Python** | ≥ 3.10 | Required by both `traffic-rl` and the backend |
-| **Node.js** | ≥ 18 | For the React/Vite frontend |
-| **npm** | ≥ 9 | Ships with Node.js |
+| **Node.js** | ≥ 18 | For the Turbo monorepo and web app |
+| **pnpm** | ≥ 9 | Workspace package manager |
 | **Git** | any | To clone repositories |
 | **CityFlow** | latest | C++ traffic simulator with Python bindings |
 | **traffic-rl** | 0.1.0 | Sibling RL library — see [below](#2-install-the-traffic-rl-dependency) |
@@ -105,7 +105,15 @@ pip install .
 
 > **Tip:** If you run into build issues, see the [CityFlow documentation](https://cityflow.readthedocs.io/en/latest/install.html) for platform-specific instructions.
 
-### 4. Backend setup
+### 4. Install workspace dependencies
+
+From the repository root:
+
+```bash
+pnpm install
+```
+
+### 5. Backend setup
 
 ```bash
 cd traffic-deploy-sim/backend
@@ -131,41 +139,22 @@ Verify everything is installed:
 python -c "import traffic_rl; import cityflow; print('✓ All dependencies loaded')"
 ```
 
-### 5. Frontend setup
-
-```bash
-cd traffic-deploy-sim/frontend
-
-# Install Node.js dependencies
-npm install
-```
+The web app lives in [web](web) and is managed through the root workspace install.
 
 ---
 
 ## Running the app
 
-Open **two terminals**:
-
-**Terminal 1 — Backend** (from repo root):
+Open **one terminal** from the repository root:
 
 ```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload
+source backend/.venv/bin/activate
+pnpm dev
 ```
 
-The API will be available at **http://localhost:8000**.
+Turbo will start the web app and backend together. The UI will be available at **http://localhost:3000** and the API at **http://localhost:8000**.
 
-**Terminal 2 — Frontend** (from repo root):
-
-```bash
-cd frontend
-npm run dev
-```
-
-The UI will be available at **http://localhost:5173**.
-
-Open the frontend in your browser and you're ready to go.
+Open the web app in your browser and you're ready to go.
 
 ---
 
@@ -179,8 +168,9 @@ traffic-deploy-sim/
 │   │   ├── models.py            # Pydantic request/response schemas
 │   │   ├── registry.py          # Model registry loader
 │   │   └── model_registry.json  # Available RL agent definitions
+│   ├── package.json             # Turbo wrapper scripts for the Python backend
 │   └── requirements.txt         # Python dependencies (FastAPI, uvicorn, etc.)
-├── frontend/
+├── web/
 │   ├── src/
 │   │   ├── App.jsx              # Main React component — live simulation UI
 │   │   ├── ReplayPanel.jsx      # Replay controls for historical runs
@@ -188,14 +178,17 @@ traffic-deploy-sim/
 │   │   ├── main.jsx             # React entry point
 │   │   └── styles.css           # Global styles
 │   ├── index.html               # HTML entry point
-│   ├── vite.config.js           # Vite configuration
-│   └── package.json             # Node.js dependencies
+│   ├── vite.config.ts           # Vite configuration
+│   └── package.json             # Web app package
 ├── data/
 │   ├── roadnet_1x2.json         # 1×2 intersection road network
 │   ├── roadnet_cross.json       # Single-cross intersection road network
 │   ├── flow_1x2.json            # Default flow for 1×2
 │   ├── flow_cross.json          # Default flow for cross
 │   └── generated/               # Auto-generated flow/engine configs (gitignored)
+├── package.json                 # Root Turbo scripts
+├── pnpm-workspace.yaml          # Workspace package list
+├── turbo.json                   # Turbo task pipeline
 ├── .github/
 │   └── copilot-instructions.md
 ├── .gitignore
@@ -209,7 +202,7 @@ traffic-deploy-sim/
 1. **Configure demand** — Set vehicle arrival rates on each ingress edge.
 2. **Pick a controller** — Choose an RL agent type (DQN, Double DQN, Dueling DQN, Tabular Q), fixed-time, or random.
 3. **Start the simulation** — The backend spins up CityFlow and the RL agent begins learning from scratch.
-4. **Watch it learn** — The frontend streams live metrics (queue length, throughput, reward, epsilon) and renders sparkline learning curves in real time.
+4. **Watch it learn** — The web app streams live metrics (queue length, throughput, reward, epsilon) and renders sparkline learning curves in real time.
 5. **Replay past runs** — Use the replay panel to scrub through historical simulation metrics.
 
 ---
