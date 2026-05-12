@@ -270,7 +270,53 @@ def _drivable_index(roadnet: dict) -> Dict[str, dict]:
 
 
 def _drivable_position(drivable_data: dict, distance: float) -> tuple[float, float]:
+    """Get (x, y) position of a vehicle on a drivable (road or lane-link)."""
     return _road_position(drivable_data, distance)
+
+
+def _incoming_roads_by_phase(roadnet: dict, intersection_id: str) -> Dict[int, List[str]]:
+    """Map each traffic-light phase index to the roads that feed into this intersection for that phase.
+    
+    Phases are determined by roadLinks at the intersection. Each roadLink represents a group of
+    lane transitions from a startRoad through the intersection to an endRoad, conceptually a "phase".
+    We return a dict: phase_index -> list of incoming road IDs for that phase.
+    """
+    phase_map: Dict[int, List[str]] = {}
+    intersections = {i["id"]: i for i in roadnet.get("intersections", [])}
+    intersection = intersections.get(intersection_id)
+    if not intersection:
+        return phase_map
+    
+    # Each roadLink at the intersection represents one phase.
+    for phase_idx, road_link in enumerate(intersection.get("roadLinks", [])):
+        start_road = road_link.get("startRoad")
+        if start_road:
+            phase_map.setdefault(phase_idx, [])
+            if start_road not in phase_map[phase_idx]:
+                phase_map[phase_idx].append(start_road)
+    
+    return phase_map
+
+
+def _phases_with_demand(
+    phase_map: Dict[int, List[str]], 
+    demand_entries: List[Dict[str, any]]
+) -> set[int]:
+    """Return the set of phase indices that have incoming demand.
+    
+    Args:
+        phase_map: Output from _incoming_roads_by_phase (phase_idx -> road list).
+        demand_entries: List of DemandEntry objects from the request.
+    
+    Returns:
+        Set of phase indices that have at least one road with non-zero demand.
+    """
+    demand_roads = {entry.edge for entry in demand_entries if getattr(entry, "rate", 0) > 0}
+    phases_with_traffic = set()
+    for phase_idx, roads in phase_map.items():
+        if any(road in demand_roads for road in roads):
+            phases_with_traffic.add(phase_idx)
+    return phases_with_traffic
 
 
 def _duration_steps_to_seconds(duration_steps: int, decision_interval: int = 5) -> int:
@@ -528,6 +574,20 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
         train_cutoff_step = _training_cutoff_step(request)
         training_actions: list[int] = []
         frozen_policy_template: list[int] = []
+        
+        # Pre-compute phase-to-demand mapping so we know which phases have traffic.
+        phase_map = _incoming_roads_by_phase(roadnet, intersection_id)
+        demand_entries = request.demand.entries
+        phases_with_traffic = _phases_with_demand(phase_map, demand_entries)
+        
+        # Validate that phases_with_traffic only contains valid phase indices.
+        # Filter out any phases that exceed the actual number of available phases.
+        valid_phases_with_traffic = {p for p in phases_with_traffic if p < env.action_size}
+        if not valid_phases_with_traffic and phases_with_traffic:
+            # If all computed phases are invalid, fall back to allowing any phase.
+            valid_phases_with_traffic = set(range(min(len(phase_map), env.action_size)))
+        phases_with_traffic = valid_phases_with_traffic
+        
         policy_cycle_steps = max(
             1,
             min(
@@ -555,20 +615,44 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
                 if step < train_cutoff_step:
                     policy_mode = "learning"
                     action = agent.act(state, train=True)
+                    # Ensure action is within valid phase range.
+                    action = int(action) % max(1, env.action_size)
                     training_actions.append(action)
                 else:
                     policy_mode = "frozen"
+                    # Freeze the agent the first time we hit this phase to stop learning updates.
+                    if not frozen_policy_template and training_actions and hasattr(agent, "freeze"):
+                        agent.freeze()
                     if not frozen_policy_template and training_actions:
                         frozen_policy_template = training_actions[-policy_cycle_steps:]
-                        # If warmup collapsed to one phase, fall back to a deterministic
-                        # round-robin so post-training control still cycles.
-                        if len(set(frozen_policy_template)) == 1 and env.action_size > 1:
-                            base = frozen_policy_template[0]
-                            frozen_policy_template = [
-                                (base + offset) % env.action_size for offset in range(env.action_size)
-                            ]
+                        # Check if policy is stuck on a single phase or dominated by one phase (>90%).
+                        # But only force rotation if traffic actually spans multiple phases.
+                        phase_counts = {}
+                        for action in frozen_policy_template:
+                            phase_counts[action] = phase_counts.get(action, 0) + 1
+                        max_count = max(phase_counts.values()) if phase_counts else 0
+                        dominance = max_count / len(frozen_policy_template) if frozen_policy_template else 0.0
+                        phases_in_policy = set(phase_counts.keys())
+                        
+                        # If traffic spans multiple phases but policy only uses one, force fair rotation.
+                        # But if traffic is only on one phase, allow the policy to specialize.
+                        if (
+                            len(phases_with_traffic) > 1 
+                            and (len(phases_in_policy) == 1 or dominance > 0.9)
+                            and env.action_size > 1
+                        ):
+                            # The learned policy ignored some demand phases. Force round-robin
+                            # through only the phases that have actual traffic.
+                            phases_to_rotate = sorted(list(phases_with_traffic))
+                            # Double-check all phases are valid (should be after our filter above).
+                            phases_to_rotate = [p for p in phases_to_rotate if p < env.action_size]
+                            if len(phases_to_rotate) > 1:
+                                frozen_policy_template = phases_to_rotate * max(1, len(frozen_policy_template) // len(phases_to_rotate))
+                                frozen_policy_template = frozen_policy_template[:len(frozen_policy_template)]
 
                     if frozen_policy_template:
+                        # Ensure all actions in the template are valid phase indices.
+                        frozen_policy_template = [min(p, env.action_size - 1) for p in frozen_policy_template]
                         action = frozen_policy_template[(step - train_cutoff_step) % len(frozen_policy_template)]
                     else:
                         action = agent.act(state, train=False)
@@ -589,9 +673,8 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
                         # If an intersection cannot be set, skip it without failing the run.
                         pass
 
-            if agent is not None and request.controller.type == "rl" and step < train_cutoff_step:
-                # Only train on the early part of the rollout so later traffic patterns
-                # do not overwrite the policy after it has settled.
+            if agent is not None and request.controller.type == "rl":
+                # Call observe unconditionally; agent.freeze() makes it a no-op after learning stops.
                 agent.observe(state, action, reward, next_state, done)
 
             state = next_state
