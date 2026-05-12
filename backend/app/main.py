@@ -263,6 +263,11 @@ def _drivable_position(drivable_data: dict, distance: float) -> tuple[float, flo
     return _road_position(drivable_data, distance)
 
 
+def _duration_steps_to_seconds(duration_steps: int, decision_interval: int = 5) -> int:
+    """Convert UI duration (decision steps) to CityFlow simulation seconds."""
+    return max(1, int(duration_steps)) * max(1, int(decision_interval))
+
+
 def _build_rl_config(
     request: SimulationRequest,
     intersection_id: str,
@@ -271,18 +276,32 @@ def _build_rl_config(
     engine_config_path: Path,
     agent_type: str,
 ) -> Any:
+    decision_interval = 5
     env_cfg = EnvironmentConfig(
         backend="cityflow",
         intersection_id=intersection_id,
         num_lanes=num_lanes,
         num_phases=num_phases,
         min_green_time=5,
-        decision_interval=5,
-        episode_horizon_seconds=request.duration_s,
+        decision_interval=decision_interval,
+        episode_horizon_seconds=_duration_steps_to_seconds(request.duration_s, decision_interval),
         cityflow_config_path=str(engine_config_path),
         cityflow_thread_num=1,
     )
-    training_cfg = TrainingConfig(agent_type=agent_type)
+    training_cfg = TrainingConfig(
+        agent_type=agent_type,
+        gamma=request.gamma,
+        learning_rate=request.learning_rate,
+        epsilon_start=request.epsilon_start,
+        epsilon_end=request.epsilon_end,
+        epsilon_decay=request.epsilon_decay,
+        batch_size=request.batch_size,
+        hidden_dim=request.hidden_dim,
+        replay_capacity=request.replay_capacity,
+        learning_starts=request.learning_starts,
+        target_update_interval=request.target_update_interval,
+        train_frequency=request.train_frequency,
+    )
     return AppConfig(
         seed=request.seed or 7,
         output_dir=str(PROJECT_ROOT / "outputs"),
@@ -384,7 +403,7 @@ def _flow_from_demand(request: SimulationRequest, roadnet: dict) -> List[dict]:
                 "route": route,
                 "interval": interval,
                 "startTime": 0,
-                "endTime": request.duration_s,
+                "endTime": _duration_steps_to_seconds(request.duration_s),
             }
         )
     return flows
@@ -469,11 +488,25 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
 
         obs = env.reset()
         state = obs.as_vector()
+        train_cutoff_step = min(300, request.duration_s)
+        training_actions: list[int] = []
+        frozen_policy_template: list[int] = []
+        policy_cycle_steps = max(
+            1,
+            min(
+                request.duration_s,
+                max(1, env.action_size)
+                * max(1, int(request.controller.fixed_time_s / max(1, cfg.env.decision_interval))),
+            ),
+        )
 
         for step in range(request.duration_s):
+            policy_mode = "idle"
             if request.controller.type == "random":
+                policy_mode = "random"
                 action = rng.randrange(env.action_size)
             elif request.controller.type == "fixed_time":
+                policy_mode = "fixed_time"
                 action = _choose_phase_index(
                     rng,
                     env.action_size,
@@ -482,7 +515,26 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
                     request.controller.fixed_time_s,
                 )
             else:
-                action = agent.act(state, train=True)
+                if step < train_cutoff_step:
+                    policy_mode = "learning"
+                    action = agent.act(state, train=True)
+                    training_actions.append(action)
+                else:
+                    policy_mode = "frozen"
+                    if not frozen_policy_template and training_actions:
+                        frozen_policy_template = training_actions[-policy_cycle_steps:]
+                        # If warmup collapsed to one phase, fall back to a deterministic
+                        # round-robin so post-training control still cycles.
+                        if len(set(frozen_policy_template)) == 1 and env.action_size > 1:
+                            base = frozen_policy_template[0]
+                            frozen_policy_template = [
+                                (base + offset) % env.action_size for offset in range(env.action_size)
+                            ]
+
+                    if frozen_policy_template:
+                        action = frozen_policy_template[(step - train_cutoff_step) % len(frozen_policy_template)]
+                    else:
+                        action = agent.act(state, train=False)
 
             next_obs, reward, done, info = env.step(action)
             next_state = next_obs.as_vector()
@@ -500,8 +552,9 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
                         # If an intersection cannot be set, skip it without failing the run.
                         pass
 
-            # Online learning: let the agent observe and update its policy.
-            if agent is not None and request.controller.type == "rl":
+            if agent is not None and request.controller.type == "rl" and step < train_cutoff_step:
+                # Only train on the early part of the rollout so later traffic patterns
+                # do not overwrite the policy after it has settled.
                 agent.observe(state, action, reward, next_state, done)
 
             state = next_state
@@ -571,6 +624,7 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
                 mean_wait_s=mean_wait,
                 reward=float(reward) if request.controller.type != "random" else 0.0,
                 epsilon=epsilon,
+                policy_mode=policy_mode,
                 controller=request.controller.type,
                 intersection_id=intersection_id,
                 phase_index=phase_index,
@@ -581,8 +635,8 @@ async def _run_simulation(job_id: str, request: SimulationRequest) -> None:
             await manager.broadcast(job_id, payload)
             await asyncio.sleep(0.05)
 
-            if done:
-                break
+            # Keep streaming until requested duration steps are completed.
+            # "done" from the env may be based on seconds and should not truncate the UI run.
 
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["updated_at"] = _now_iso()

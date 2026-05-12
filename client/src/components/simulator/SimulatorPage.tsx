@@ -17,6 +17,7 @@ type MetricFrame = {
   throughput?: number;
   reward?: number;
   epsilon?: number;
+  policy_mode?: string;
   mean_wait_s?: number;
   phase_index?: number;
   intersection_id?: string | null;
@@ -42,6 +43,17 @@ export function SimulatorPage() {
   const [duration, setDuration] = useState(300);
   const [seed, setSeed] = useState(42);
   const [status, setStatus] = useState("idle");
+    const [gamma, setGamma] = useState(0.95);
+    const [learningRate, setLearningRate] = useState(0.001);
+    const [batchSize, setBatchSize] = useState(32);
+    const [epsilonStart, setEpsilonStart] = useState(1.0);
+    const [epsilonEnd, setEpsilonEnd] = useState(0.1);
+    const [epsilonDecay, setEpsilonDecay] = useState(0.997);
+    const [hiddenDim, setHiddenDim] = useState(64);
+    const [replayCapacity, setReplayCapacity] = useState(5000);
+    const [learningStarts, setLearningStarts] = useState(100);
+    const [targetUpdateInterval, setTargetUpdateInterval] = useState(100);
+    const [trainFrequency, setTrainFrequency] = useState(1);
   const [jobId, setJobId] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<MetricFrame[]>([]);
   const [vehicles, setVehicles] = useState<VehicleFrame[]>([]);
@@ -182,6 +194,17 @@ export function SimulatorPage() {
       },
       duration_s: duration,
       seed: seed,
+        gamma: gamma,
+        learning_rate: learningRate,
+        epsilon_start: epsilonStart,
+        epsilon_end: epsilonEnd,
+        epsilon_decay: epsilonDecay,
+        batch_size: batchSize,
+        hidden_dim: hiddenDim,
+        replay_capacity: replayCapacity,
+        learning_starts: learningStarts,
+        target_update_interval: targetUpdateInterval,
+        train_frequency: trainFrequency,
     };
 
     if (!payload.demand.entries.length) {
@@ -261,7 +284,11 @@ export function SimulatorPage() {
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span className="flex items-center gap-2 rounded-full border border-border/50 bg-secondary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-foreground shadow-sm">
                 <span className="h-2 w-2 rounded-full bg-secondary" />
-                {status === "running" ? "Learning" : isReplaying ? "Replaying" : "Idle"}
+                {status === "running"
+                  ? (latestMetric?.policy_mode ?? "running")
+                  : isReplaying
+                    ? "replaying"
+                    : "idle"}
               </span>
               {latestMetric?.step !== undefined && (
                 <span className="text-xs font-semibold uppercase tracking-[0.25em] text-foreground/70">
@@ -552,17 +579,29 @@ export function SimulatorPage() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium">Learning Rate (alpha)</span>
-                    <span className="font-mono text-xs">0.0003</span>
+                     <span className="font-mono text-xs">{learningRate.toFixed(6)}</span>
                   </div>
-                  <Slider defaultValue={[30]} max={100} step={1} />
+                   <Slider
+                     value={[learningRate * 1000]}
+                     onValueChange={(val: number[]) => setLearningRate(val[0] / 1000)}
+                     min={0}
+                     max={100}
+                     step={1}
+                   />
                   <div className="h-10 rounded-xl border border-border/60 bg-surface-bright shadow-sm" />
                 </div>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium">Discount Factor (gamma)</span>
-                    <span className="font-mono text-xs">0.99</span>
+                     <span className="font-mono text-xs">{gamma.toFixed(4)}</span>
                   </div>
-                  <Slider defaultValue={[99]} max={100} step={1} />
+                   <Slider
+                     value={[Math.round(gamma * 100)]}
+                     onValueChange={(val: number[]) => setGamma(val[0] / 100)}
+                     min={0}
+                     max={100}
+                     step={1}
+                   />
                   <div className="h-10 rounded-xl border border-border/60 bg-surface-bright shadow-sm" />
                 </div>
                 <div className="space-y-3">
@@ -573,15 +612,15 @@ export function SimulatorPage() {
                         variant="outline"
                         className="w-full justify-between rounded-full font-semibold"
                       >
-                        64
+                         {batchSize}
                         <span className="text-xs text-muted-foreground">▾</span>
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-40">
-                      <DropdownMenuItem>32</DropdownMenuItem>
-                      <DropdownMenuItem>64</DropdownMenuItem>
-                      <DropdownMenuItem>128</DropdownMenuItem>
-                      <DropdownMenuItem>256</DropdownMenuItem>
+                       <DropdownMenuItem onClick={() => setBatchSize(32)}>32</DropdownMenuItem>
+                       <DropdownMenuItem onClick={() => setBatchSize(64)}>64</DropdownMenuItem>
+                       <DropdownMenuItem onClick={() => setBatchSize(128)}>128</DropdownMenuItem>
+                       <DropdownMenuItem onClick={() => setBatchSize(256)}>256</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
